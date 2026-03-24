@@ -2,8 +2,11 @@ package com.example.marketofthehood
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,13 +44,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.example.marketofthehood.ui.theme.MarketofthehoodTheme
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,13 +79,20 @@ data class Listing(
     val description: String,
     val category: String,
     val price: String,
-    val sellerId: String
+    val sellerId: String,
+    val imageUri: String? = null
 )
 
 private val demoCredentials = mapOf(
     "aksha" to "1234",
     "sam" to "password",
     "ria" to "market"
+)
+
+private val sellerRatings = mapOf(
+    "aksha" to 4.6f,
+    "sam" to 4.2f,
+    "ria" to 4.8f
 )
 
 private val starterListings = listOf(
@@ -118,19 +133,30 @@ private val starterListings = listOf(
 @Composable
 fun BuySellApp() {
     var loggedInUserId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedListingId by rememberSaveable { mutableStateOf<Int?>(null) }
+    val allListings = remember { mutableStateListOf<Listing>().apply { addAll(starterListings) } }
+    var nextId by rememberSaveable { mutableStateOf(starterListings.size + 1) }
 
     if (loggedInUserId == null) {
-        LoginScreen(
-            onLoginSuccess = { loggedInUserId = it }
+        LoginScreen(onLoginSuccess = { loggedInUserId = it })
+        return
+    }
+
+    val selectedListing = allListings.firstOrNull { it.id == selectedListingId }
+
+    if (selectedListing != null) {
+        ListingDetailScreen(
+            listing = selectedListing,
+            sellerRating = sellerRatings[selectedListing.sellerId] ?: 0f,
+            onBack = { selectedListingId = null }
         )
     } else {
-        val allListings = remember { mutableStateListOf<Listing>().apply { addAll(starterListings) } }
-        var nextId by rememberSaveable { mutableStateOf(starterListings.size + 1) }
-
         MarketplaceScreen(
             userId = loggedInUserId!!,
             listings = allListings,
-            onAddListing = { title, description, category, price ->
+            sellerRatings = sellerRatings,
+            onListingClick = { selectedListingId = it.id },
+            onAddListing = { title, description, category, price, imageUri ->
                 allListings.add(
                     Listing(
                         id = nextId,
@@ -138,12 +164,16 @@ fun BuySellApp() {
                         description = description,
                         category = category,
                         price = price,
-                        sellerId = loggedInUserId!!
+                        sellerId = loggedInUserId!!,
+                        imageUri = imageUri
                     )
                 )
                 nextId += 1
             },
-            onLogout = { loggedInUserId = null }
+            onLogout = {
+                selectedListingId = null
+                loggedInUserId = null
+            }
         )
     }
 }
@@ -247,7 +277,9 @@ fun LoginScreen(
 fun MarketplaceScreen(
     userId: String,
     listings: List<Listing>,
-    onAddListing: (String, String, String, String) -> Unit,
+    sellerRatings: Map<String, Float>,
+    onListingClick: (Listing) -> Unit,
+    onAddListing: (String, String, String, String, String?) -> Unit,
     onLogout: () -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(HomeTab.MARKET) }
@@ -300,14 +332,18 @@ fun MarketplaceScreen(
         when (selectedTab) {
             HomeTab.MARKET -> SaleFeed(
                 listings = listings,
-                paddingValues = innerPadding
+                sellerRatings = sellerRatings,
+                paddingValues = innerPadding,
+                onListingClick = onListingClick
             )
 
             HomeTab.SELLER -> SellerSection(
                 userId = userId,
                 listings = listings,
+                sellerRatings = sellerRatings,
                 paddingValues = innerPadding,
-                onAddListing = onAddListing
+                onAddListing = onAddListing,
+                onListingClick = onListingClick
             )
         }
     }
@@ -316,7 +352,9 @@ fun MarketplaceScreen(
 @Composable
 fun SaleFeed(
     listings: List<Listing>,
-    paddingValues: PaddingValues
+    sellerRatings: Map<String, Float>,
+    paddingValues: PaddingValues,
+    onListingClick: (Listing) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -334,7 +372,11 @@ fun SaleFeed(
         }
 
         items(items = listings, key = { it.id }) { listing ->
-            ListingCard(listing = listing)
+            ListingCard(
+                listing = listing,
+                sellerRating = sellerRatings[listing.sellerId] ?: 0f,
+                onClick = { onListingClick(listing) }
+            )
         }
     }
 }
@@ -343,8 +385,10 @@ fun SaleFeed(
 fun SellerSection(
     userId: String,
     listings: List<Listing>,
+    sellerRatings: Map<String, Float>,
     paddingValues: PaddingValues,
-    onAddListing: (String, String, String, String) -> Unit
+    onAddListing: (String, String, String, String, String?) -> Unit,
+    onListingClick: (Listing) -> Unit
 ) {
     val myListings = listings.filter { it.sellerId == userId }
 
@@ -382,7 +426,11 @@ fun SellerSection(
             }
         } else {
             items(items = myListings, key = { it.id }) { listing ->
-                ListingCard(listing = listing)
+                ListingCard(
+                    listing = listing,
+                    sellerRating = sellerRatings[listing.sellerId] ?: 0f,
+                    onClick = { onListingClick(listing) }
+                )
             }
         }
     }
@@ -390,13 +438,20 @@ fun SellerSection(
 
 @Composable
 fun AddListingCard(
-    onAddListing: (String, String, String, String) -> Unit
+    onAddListing: (String, String, String, String, String?) -> Unit
 ) {
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var category by rememberSaveable { mutableStateOf("") }
     var price by rememberSaveable { mutableStateOf("") }
+    var imageUri by rememberSaveable { mutableStateOf<String?>(null) }
     var formError by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        imageUri = uri?.toString()
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -460,6 +515,31 @@ fun AddListingCard(
                 maxLines = 3
             )
 
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ListingImage(
+                    imageUri = imageUri,
+                    category = category,
+                    modifier = Modifier.size(64.dp),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                Button(
+                    onClick = {
+                        imagePickerLauncher.launch(
+                            PickVisualMediaRequest(
+                                 ActivityResultContracts.PickVisualMedia.ImageOnly
+                             )
+                        )
+                    }
+                ) {
+                    Text(if (imageUri == null) "Add Image" else "Change Image")
+                }
+            }
+
             if (formError != null) {
                 Text(
                     text = formError!!,
@@ -477,12 +557,14 @@ fun AddListingCard(
                             title.trim(),
                             description.trim(),
                             category.trim(),
-                            "$${price.trim()}"
+                            "$${price.trim()}",
+                            imageUri
                         )
                         title = ""
                         description = ""
                         category = ""
                         price = ""
+                        imageUri = null
                         formError = null
                     }
                 },
@@ -495,8 +577,13 @@ fun AddListingCard(
 }
 
 @Composable
-fun ListingCard(listing: Listing) {
+fun ListingCard(
+    listing: Listing,
+    sellerRating: Float,
+    onClick: () -> Unit
+) {
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
@@ -508,21 +595,12 @@ fun ListingCard(listing: Listing) {
                 .padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Surface(
-                modifier = Modifier
-                    .size(56.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = listing.category.take(1).uppercase(),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
+            ListingImage(
+                imageUri = listing.imageUri,
+                category = listing.category,
+                modifier = Modifier.size(72.dp),
+                shape = RoundedCornerShape(12.dp)
+            )
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -545,6 +623,10 @@ fun ListingCard(listing: Listing) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                SellerRatingBar(
+                    rating = sellerRating,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
 
             Text(
@@ -554,6 +636,176 @@ fun ListingCard(listing: Listing) {
                 fontWeight = FontWeight.Bold
             )
         }
+    }
+}
+
+@Composable
+fun ListingDetailScreen(
+    listing: Listing,
+    sellerRating: Float,
+    onBack: () -> Unit
+) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBack) {
+                    Text("Back")
+                }
+                Text(
+                    text = "Item details",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                ListingImage(
+                    imageUri = listing.imageUri,
+                    category = listing.category,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                    shape = RoundedCornerShape(18.dp)
+                )
+            }
+
+            item {
+                Text(
+                    text = listing.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Text(
+                    text = listing.price,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        text = listing.category,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+
+            item {
+                Text(
+                    text = listing.description,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Seller details",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = listing.sellerId,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        SellerRatingBar(rating = sellerRating)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ListingImage(
+    imageUri: String?,
+    category: String,
+    modifier: Modifier = Modifier,
+    shape: RoundedCornerShape = RoundedCornerShape(12.dp)
+) {
+    if (imageUri.isNullOrBlank()) {
+        Surface(
+            modifier = modifier,
+            shape = shape,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(
+                    text = category.take(1).ifBlank { "?" }.uppercase(),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    } else {
+        AsyncImage(
+            model = imageUri,
+            contentDescription = "Listing image",
+            modifier = modifier,
+            contentScale = ContentScale.Crop
+        )
+    }
+}
+
+@Composable
+fun SellerRatingBar(
+    rating: Float,
+    modifier: Modifier = Modifier
+) {
+    val clamped = rating.coerceIn(0f, 5f)
+    val filledStars = clamped.toInt()
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(5) { index ->
+            Text(
+                text = if (index < filledStars) "★" else "☆",
+                color = if (index < filledStars) Color(0xFFFFB300) else MaterialTheme.colorScheme.outline,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = String.format(Locale.US, "%.1f/5", clamped),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -572,8 +824,22 @@ fun MarketplaceScreenPreview() {
         MarketplaceScreen(
             userId = "aksha",
             listings = starterListings,
-            onAddListing = { _, _, _, _ -> },
+            sellerRatings = sellerRatings,
+            onListingClick = {},
+            onAddListing = { _, _, _, _, _ -> },
             onLogout = {}
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ListingDetailPreview() {
+    MarketofthehoodTheme {
+        ListingDetailScreen(
+            listing = starterListings.first(),
+            sellerRating = sellerRatings["sam"] ?: 0f,
+            onBack = {}
         )
     }
 }
