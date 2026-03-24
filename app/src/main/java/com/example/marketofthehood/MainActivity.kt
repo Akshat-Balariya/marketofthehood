@@ -1,6 +1,7 @@
 package com.example.marketofthehood
 
 import android.content.Context
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -9,6 +10,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -69,7 +75,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.marketofthehood.ui.theme.MarketofthehoodTheme
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
 import java.util.Locale
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,7 +95,8 @@ class MainActivity : ComponentActivity() {
 
 enum class HomeTab(val label: String) {
     MARKET("On Sale"),
-    SELLER("Seller")
+    SELLER("Seller"),
+    PURCHASES("Purchases")
 }
 
 data class Listing(
@@ -117,10 +128,76 @@ private val demoCredentials = mapOf(
 
 private const val SESSION_PREFS = "market_session"
 private const val SESSION_USER_ID_KEY = "logged_in_user_id"
+private const val SESSION_LISTINGS_KEY = "saved_listings"
 
 private fun parseListingPrice(price: String): Double? {
     val normalized = price.replace(Regex("[^0-9.]"), "")
     return normalized.toDoubleOrNull()
+}
+
+private fun persistImageUriForListing(context: Context, sourceUriString: String?): String? {
+    if (sourceUriString.isNullOrBlank()) return null
+
+    return try {
+        val sourceUri = Uri.parse(sourceUriString)
+        val imagesDir = File(context.filesDir, "listing_images").apply { mkdirs() }
+        val targetFile = File(
+            imagesDir,
+            "listing_${System.currentTimeMillis()}_${UUID.randomUUID()}.jpg"
+        )
+
+        context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            targetFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: return null
+
+        Uri.fromFile(targetFile).toString()
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun saveListings(sessionPrefs: android.content.SharedPreferences, listings: List<Listing>) {
+    val jsonArray = JSONArray()
+    listings.forEach { listing ->
+        jsonArray.put(
+            JSONObject()
+                .put("id", listing.id)
+                .put("title", listing.title)
+                .put("description", listing.description)
+                .put("category", listing.category)
+                .put("price", listing.price)
+                .put("sellerId", listing.sellerId)
+                .put("imageUri", listing.imageUri)
+        )
+    }
+    sessionPrefs.edit().putString(SESSION_LISTINGS_KEY, jsonArray.toString()).apply()
+}
+
+private fun loadListings(sessionPrefs: android.content.SharedPreferences): List<Listing>? {
+    val raw = sessionPrefs.getString(SESSION_LISTINGS_KEY, null) ?: return null
+    return try {
+        val jsonArray = JSONArray(raw)
+        buildList {
+            for (index in 0 until jsonArray.length()) {
+                val item = jsonArray.optJSONObject(index) ?: continue
+                add(
+                    Listing(
+                        id = item.optInt("id"),
+                        title = item.optString("title"),
+                        description = item.optString("description"),
+                        category = item.optString("category"),
+                        price = item.optString("price"),
+                        sellerId = item.optString("sellerId"),
+                        imageUri = item.optString("imageUri").ifBlank { null }
+                    )
+                )
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
 }
 
 private val sellerRatings = mapOf(
@@ -135,7 +212,7 @@ private val starterListings = listOf(
         title = "Mountain Bicycle",
         description = "Good condition bike, recently serviced.",
         category = "Sports",
-        price = "$210",
+        price = "Rs 210",
         sellerId = "sam"
     ),
     Listing(
@@ -143,7 +220,7 @@ private val starterListings = listOf(
         title = "Study Table",
         description = "Wooden study table with drawer.",
         category = "Furniture",
-        price = "$85",
+        price = "Rs 85",
         sellerId = "ria"
     ),
     Listing(
@@ -151,7 +228,7 @@ private val starterListings = listOf(
         title = "Laptop 16GB RAM",
         description = "Lightly used for one year, charger included.",
         category = "Electronics",
-        price = "$520",
+        price = "Rs 520",
         sellerId = "aksha"
     ),
     Listing(
@@ -159,7 +236,127 @@ private val starterListings = listOf(
         title = "Guitar",
         description = "Acoustic guitar for beginners.",
         category = "Music",
-        price = "$95",
+        price = "Rs 95",
+        sellerId = "sam"
+    ),
+    Listing(
+        id = 5,
+        title = "Office Chair",
+        description = "Ergonomic chair with adjustable height.",
+        category = "Furniture",
+        price = "Rs 140",
+        sellerId = "ria"
+    ),
+    Listing(
+        id = 6,
+        title = "Bluetooth Speaker",
+        description = "Portable speaker with deep bass and 10h battery.",
+        category = "Electronics",
+        price = "Rs 65",
+        sellerId = "aksha"
+    ),
+    Listing(
+        id = 7,
+        title = "Cricket Bat",
+        description = "English willow practice bat, lightly used.",
+        category = "Sports",
+        price = "Rs 120",
+        sellerId = "sam"
+    ),
+    Listing(
+        id = 8,
+        title = "Microwave Oven",
+        description = "20L microwave, fully working condition.",
+        category = "Home",
+        price = "Rs 175",
+        sellerId = "ria"
+    ),
+    Listing(
+        id = 9,
+        title = "Running Shoes",
+        description = "Comfortable running shoes, size 9.",
+        category = "Fashion",
+        price = "Rs 55",
+        sellerId = "aksha"
+    ),
+    Listing(
+        id = 10,
+        title = "Ceiling Fan",
+        description = "3-speed fan with remote, almost new.",
+        category = "Home",
+        price = "Rs 80",
+        sellerId = "sam"
+    ),
+    Listing(
+        id = 11,
+        title = "Gaming Keyboard",
+        description = "Mechanical keyboard with RGB backlight.",
+        category = "Electronics",
+        price = "Rs 110",
+        sellerId = "ria"
+    ),
+    Listing(
+        id = 12,
+        title = "Bookshelf",
+        description = "5-tier bookshelf made of engineered wood.",
+        category = "Furniture",
+        price = "Rs 160",
+        sellerId = "aksha"
+    ),
+    Listing(
+        id = 13,
+        title = "Table Lamp",
+        description = "LED study lamp with touch controls.",
+        category = "Home",
+        price = "Rs 35",
+        sellerId = "sam"
+    ),
+    Listing(
+        id = 14,
+        title = "Backpack",
+        description = "Water-resistant laptop backpack.",
+        category = "Fashion",
+        price = "Rs 45",
+        sellerId = "ria"
+    ),
+    Listing(
+        id = 15,
+        title = "Coffee Maker",
+        description = "Compact drip coffee machine.",
+        category = "Kitchen",
+        price = "Rs 130",
+        sellerId = "aksha"
+    ),
+    Listing(
+        id = 16,
+        title = "Power Bank",
+        description = "20000mAh fast-charging power bank.",
+        category = "Electronics",
+        price = "Rs 70",
+        sellerId = "sam"
+    ),
+    Listing(
+        id = 17,
+        title = "Yoga Mat",
+        description = "Non-slip mat with carry strap.",
+        category = "Sports",
+        price = "Rs 30",
+        sellerId = "ria"
+    ),
+    Listing(
+        id = 18,
+        title = "Wall Clock",
+        description = "Minimal design wall clock, silent movement.",
+        category = "Home",
+        price = "Rs 25",
+        sellerId = "aksha"
+    ),
+    Listing(
+        id = 19,
+        title = "Desk Organizer",
+        description = "Metal mesh organizer for stationery.",
+        category = "Office",
+        price = "Rs 20",
         sellerId = "sam"
     )
 )
@@ -170,6 +367,9 @@ fun BuySellApp() {
     val sessionPrefs = remember(context) {
         context.getSharedPreferences(SESSION_PREFS, Context.MODE_PRIVATE)
     }
+    val initialListings = remember(sessionPrefs) {
+        loadListings(sessionPrefs)?.takeIf { it.isNotEmpty() } ?: starterListings
+    }
 
     var loggedInUserId by rememberSaveable {
         mutableStateOf(sessionPrefs.getString(SESSION_USER_ID_KEY, null))
@@ -178,9 +378,12 @@ fun BuySellApp() {
     var activeChatSellerId by rememberSaveable { mutableStateOf<String?>(null) }
     var isChatInboxOpen by rememberSaveable { mutableStateOf(false) }
     var pendingPurchaseListingId by rememberSaveable { mutableStateOf<Int?>(null) }
-    val allListings = remember { mutableStateListOf<Listing>().apply { addAll(starterListings) } }
+    val allListings = remember { mutableStateListOf<Listing>().apply { addAll(initialListings) } }
     val chatThreads = remember { mutableStateMapOf<String, List<ChatMessage>>() }
-    var nextId by rememberSaveable { mutableStateOf(starterListings.size + 1) }
+    val purchasesByUser = remember { mutableStateMapOf<String, List<Listing>>() }
+    var nextId by rememberSaveable {
+        mutableStateOf((initialListings.maxOfOrNull { it.id } ?: 0) + 1)
+    }
 
     if (loggedInUserId == null) {
         LoginScreen(
@@ -194,6 +397,7 @@ fun BuySellApp() {
 
     val selectedListing = allListings.firstOrNull { it.id == selectedListingId }
     val pendingPurchaseListing = allListings.firstOrNull { it.id == pendingPurchaseListingId }
+    val userPurchases = purchasesByUser[loggedInUserId!!].orEmpty()
 
     if (activeChatSellerId != null) {
         ChatScreen(
@@ -241,11 +445,13 @@ fun BuySellApp() {
         MarketplaceScreen(
             userId = loggedInUserId!!,
             listings = allListings,
+            purchases = userPurchases,
             sellerRatings = sellerRatings,
             chatCount = chatThreads.size,
             onOpenChatInbox = { isChatInboxOpen = true },
             onListingClick = { selectedListingId = it.id },
             onAddListing = { title, description, category, price, imageUri ->
+                val persistedImageUri = persistImageUriForListing(context, imageUri)
                 allListings.add(
                     Listing(
                         id = nextId,
@@ -254,10 +460,11 @@ fun BuySellApp() {
                         category = category,
                         price = price,
                         sellerId = loggedInUserId!!,
-                        imageUri = imageUri
+                        imageUri = persistedImageUri
                     )
                 )
                 nextId += 1
+                saveListings(sessionPrefs, allListings)
             },
             onLogout = {
                 activeChatSellerId = null
@@ -275,7 +482,10 @@ fun BuySellApp() {
             listing = pendingPurchaseListing,
             onDismiss = { pendingPurchaseListingId = null },
             onConfirmBuy = {
+                val existingPurchases = purchasesByUser[loggedInUserId!!].orEmpty()
+                purchasesByUser[loggedInUserId!!] = existingPurchases + pendingPurchaseListing
                 allListings.removeAll { it.id == pendingPurchaseListing.id }
+                saveListings(sessionPrefs, allListings)
                 pendingPurchaseListingId = null
                 selectedListingId = null
             }
@@ -382,6 +592,7 @@ fun LoginScreen(
 fun MarketplaceScreen(
     userId: String,
     listings: List<Listing>,
+    purchases: List<Listing>,
     sellerRatings: Map<String, Float>,
     chatCount: Int,
     onOpenChatInbox: () -> Unit,
@@ -392,7 +603,7 @@ fun MarketplaceScreen(
     var selectedTab by rememberSaveable { mutableStateOf(HomeTab.MARKET) }
 
     // On the Seller tab, system back returns to the main market tab first.
-    BackHandler(enabled = selectedTab == HomeTab.SELLER) {
+    BackHandler(enabled = selectedTab != HomeTab.MARKET) {
         selectedTab = HomeTab.MARKET
     }
 
@@ -473,6 +684,12 @@ fun MarketplaceScreen(
                 onAddListing = onAddListing,
                 onListingClick = onListingClick
             )
+
+            HomeTab.PURCHASES -> PurchasesSection(
+                purchases = purchases,
+                sellerRatings = sellerRatings,
+                paddingValues = innerPadding
+            )
         }
     }
 }
@@ -484,6 +701,8 @@ fun SaleFeed(
     paddingValues: PaddingValues,
     onListingClick: (Listing) -> Unit
 ) {
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var showFilters by rememberSaveable { mutableStateOf(false) }
     var minPriceInput by rememberSaveable { mutableStateOf("") }
     var maxPriceInput by rememberSaveable { mutableStateOf("") }
     var selectedSort by rememberSaveable { mutableStateOf(ListingSortOption.DEFAULT) }
@@ -491,7 +710,19 @@ fun SaleFeed(
     val minPrice = minPriceInput.toDoubleOrNull()
     val maxPrice = maxPriceInput.toDoubleOrNull()
 
-    val filteredListings = listings.filter { listing ->
+    val normalizedQuery = searchQuery.trim()
+    val searchedListings = if (normalizedQuery.isBlank()) {
+        listings
+    } else {
+        listings.filter { listing ->
+            listing.title.contains(normalizedQuery, ignoreCase = true) ||
+                listing.description.contains(normalizedQuery, ignoreCase = true) ||
+                listing.category.contains(normalizedQuery, ignoreCase = true) ||
+                listing.sellerId.contains(normalizedQuery, ignoreCase = true)
+        }
+    }
+
+    val filteredListings = searchedListings.filter { listing ->
         val priceValue = parseListingPrice(listing.price)
         when {
             priceValue == null -> minPrice == null && maxPrice == null
@@ -527,63 +758,94 @@ fun SaleFeed(
         }
 
         item {
-            Card(
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Search") },
+                    singleLine = true,
+                    placeholder = { Text("Item, category, seller") }
+                )
+
+                Button(
+                    onClick = { showFilters = !showFilters }
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = minPriceInput,
-                            onValueChange = { minPriceInput = it },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("Min price") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
-
-                        OutlinedTextField(
-                            value = maxPriceInput,
-                            onValueChange = { maxPriceInput = it },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("Max price") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ListingSortOption.entries.forEach { option ->
-                            FilterChip(
-                                selected = selectedSort == option,
-                                onClick = { selectedSort = option },
-                                label = { Text(option.label) }
-                            )
-                        }
-                        TextButton(
-                            onClick = {
-                                minPriceInput = ""
-                                maxPriceInput = ""
-                                selectedSort = ListingSortOption.DEFAULT
-                            }
-                        ) {
-                            Text("Reset")
-                        }
-                    }
-
-                    Text(
-                        text = "Showing ${visibleListings.size} item(s)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Text(if (showFilters) "Hide" else "Filters")
                 }
             }
+        }
+
+        item {
+            AnimatedVisibility(
+                visible = showFilters,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = minPriceInput,
+                                onValueChange = { minPriceInput = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Min price") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+
+                            OutlinedTextField(
+                                value = maxPriceInput,
+                                onValueChange = { maxPriceInput = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Max price") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ListingSortOption.entries.forEach { option ->
+                                FilterChip(
+                                    selected = selectedSort == option,
+                                    onClick = { selectedSort = option },
+                                    label = { Text(option.label) }
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    minPriceInput = ""
+                                    maxPriceInput = ""
+                                    selectedSort = ListingSortOption.DEFAULT
+                                }
+                            ) {
+                                Text("Reset")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Text(
+                text = "Showing ${visibleListings.size} item(s)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         if (visibleListings.isEmpty()) {
@@ -593,7 +855,7 @@ fun SaleFeed(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Text(
-                        text = "No listings found for this price range.",
+                        text = "No listings found for your search/filter.",
                         modifier = Modifier.padding(16.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -667,6 +929,52 @@ fun SellerSection(
 }
 
 @Composable
+fun PurchasesSection(
+    purchases: List<Listing>,
+    sellerRatings: Map<String, Float>,
+    paddingValues: PaddingValues
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text(
+                text = "Your purchases",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        if (purchases.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Text(
+                        text = "No purchases yet. Buy an item to track it here.",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            items(items = purchases, key = { it.id }) { listing ->
+                ListingCard(
+                    listing = listing,
+                    sellerRating = sellerRatings[listing.sellerId] ?: 0f,
+                    onClick = {}
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun AddListingCard(
     onAddListing: (String, String, String, String, String?) -> Unit
 ) {
@@ -728,7 +1036,7 @@ fun AddListingCard(
                 },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Price") },
-                prefix = { Text("$") },
+                prefix = { Text("Rs ") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
             )
@@ -787,7 +1095,7 @@ fun AddListingCard(
                             title.trim(),
                             description.trim(),
                             category.trim(),
-                            "$${price.trim()}",
+                            "Rs ${price.trim()}",
                             imageUri
                         )
                         title = ""
@@ -1320,6 +1628,7 @@ fun MarketplaceScreenPreview() {
         MarketplaceScreen(
             userId = "aksha",
             listings = starterListings,
+            purchases = starterListings.take(1),
             sellerRatings = sellerRatings,
             chatCount = 2,
             onOpenChatInbox = {},
