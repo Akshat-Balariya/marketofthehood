@@ -2,6 +2,7 @@ package com.example.marketofthehood
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -283,6 +284,11 @@ fun MarketplaceScreen(
     onLogout: () -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(HomeTab.MARKET) }
+
+    // On the Seller tab, system back returns to the main market tab first.
+    BackHandler(enabled = selectedTab == HomeTab.SELLER) {
+        selectedTab = HomeTab.MARKET
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -645,6 +651,9 @@ fun ListingDetailScreen(
     sellerRating: Float,
     onBack: () -> Unit
 ) {
+    // System back from details should return to the previous screen in-app.
+    BackHandler(onBack = onBack)
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
