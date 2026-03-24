@@ -1,5 +1,6 @@
 package com.example.marketofthehood
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -9,6 +10,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +38,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -53,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -98,11 +103,25 @@ data class ChatMessage(
     val text: String
 )
 
+enum class ListingSortOption(val label: String) {
+    DEFAULT("Default"),
+    PRICE_LOW_TO_HIGH("Price: Low to High"),
+    PRICE_HIGH_TO_LOW("Price: High to Low")
+}
+
 private val demoCredentials = mapOf(
     "aksha" to "1234",
     "sam" to "password",
     "ria" to "market"
 )
+
+private const val SESSION_PREFS = "market_session"
+private const val SESSION_USER_ID_KEY = "logged_in_user_id"
+
+private fun parseListingPrice(price: String): Double? {
+    val normalized = price.replace(Regex("[^0-9.]"), "")
+    return normalized.toDoubleOrNull()
+}
 
 private val sellerRatings = mapOf(
     "aksha" to 4.6f,
@@ -147,7 +166,14 @@ private val starterListings = listOf(
 
 @Composable
 fun BuySellApp() {
-    var loggedInUserId by rememberSaveable { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val sessionPrefs = remember(context) {
+        context.getSharedPreferences(SESSION_PREFS, Context.MODE_PRIVATE)
+    }
+
+    var loggedInUserId by rememberSaveable {
+        mutableStateOf(sessionPrefs.getString(SESSION_USER_ID_KEY, null))
+    }
     var selectedListingId by rememberSaveable { mutableStateOf<Int?>(null) }
     var activeChatSellerId by rememberSaveable { mutableStateOf<String?>(null) }
     var isChatInboxOpen by rememberSaveable { mutableStateOf(false) }
@@ -157,7 +183,12 @@ fun BuySellApp() {
     var nextId by rememberSaveable { mutableStateOf(starterListings.size + 1) }
 
     if (loggedInUserId == null) {
-        LoginScreen(onLoginSuccess = { loggedInUserId = it })
+        LoginScreen(
+            onLoginSuccess = { userId ->
+                loggedInUserId = userId
+                sessionPrefs.edit().putString(SESSION_USER_ID_KEY, userId).apply()
+            }
+        )
         return
     }
 
@@ -234,6 +265,7 @@ fun BuySellApp() {
                 selectedListingId = null
                 pendingPurchaseListingId = null
                 loggedInUserId = null
+                sessionPrefs.edit().remove(SESSION_USER_ID_KEY).apply()
             }
         )
     }
@@ -452,6 +484,33 @@ fun SaleFeed(
     paddingValues: PaddingValues,
     onListingClick: (Listing) -> Unit
 ) {
+    var minPriceInput by rememberSaveable { mutableStateOf("") }
+    var maxPriceInput by rememberSaveable { mutableStateOf("") }
+    var selectedSort by rememberSaveable { mutableStateOf(ListingSortOption.DEFAULT) }
+
+    val minPrice = minPriceInput.toDoubleOrNull()
+    val maxPrice = maxPriceInput.toDoubleOrNull()
+
+    val filteredListings = listings.filter { listing ->
+        val priceValue = parseListingPrice(listing.price)
+        when {
+            priceValue == null -> minPrice == null && maxPrice == null
+            minPrice != null && priceValue < minPrice -> false
+            maxPrice != null && priceValue > maxPrice -> false
+            else -> true
+        }
+    }
+
+    val visibleListings = when (selectedSort) {
+        ListingSortOption.DEFAULT -> filteredListings
+        ListingSortOption.PRICE_LOW_TO_HIGH -> {
+            filteredListings.sortedBy { parseListingPrice(it.price) ?: Double.MAX_VALUE }
+        }
+        ListingSortOption.PRICE_HIGH_TO_LOW -> {
+            filteredListings.sortedByDescending { parseListingPrice(it.price) ?: Double.MIN_VALUE }
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -467,12 +526,87 @@ fun SaleFeed(
             )
         }
 
-        items(items = listings, key = { it.id }) { listing ->
-            ListingCard(
-                listing = listing,
-                sellerRating = sellerRatings[listing.sellerId] ?: 0f,
-                onClick = { onListingClick(listing) }
-            )
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = minPriceInput,
+                            onValueChange = { minPriceInput = it },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Min price") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+
+                        OutlinedTextField(
+                            value = maxPriceInput,
+                            onValueChange = { maxPriceInput = it },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("Max price") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ListingSortOption.entries.forEach { option ->
+                            FilterChip(
+                                selected = selectedSort == option,
+                                onClick = { selectedSort = option },
+                                label = { Text(option.label) }
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                minPriceInput = ""
+                                maxPriceInput = ""
+                                selectedSort = ListingSortOption.DEFAULT
+                            }
+                        ) {
+                            Text("Reset")
+                        }
+                    }
+
+                    Text(
+                        text = "Showing ${visibleListings.size} item(s)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        if (visibleListings.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Text(
+                        text = "No listings found for this price range.",
+                        modifier = Modifier.padding(16.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            items(items = visibleListings, key = { it.id }) { listing ->
+                ListingCard(
+                    listing = listing,
+                    sellerRating = sellerRatings[listing.sellerId] ?: 0f,
+                    onClick = { onListingClick(listing) }
+                )
+            }
         }
     }
 }
