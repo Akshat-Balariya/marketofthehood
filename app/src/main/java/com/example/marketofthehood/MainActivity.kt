@@ -30,6 +30,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -38,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,7 +52,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -82,6 +87,11 @@ data class Listing(
     val price: String,
     val sellerId: String,
     val imageUri: String? = null
+)
+
+data class ChatMessage(
+    val senderId: String,
+    val text: String
 )
 
 private val demoCredentials = mapOf(
@@ -135,7 +145,10 @@ private val starterListings = listOf(
 fun BuySellApp() {
     var loggedInUserId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedListingId by rememberSaveable { mutableStateOf<Int?>(null) }
+    var activeChatSellerId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingPurchaseListingId by rememberSaveable { mutableStateOf<Int?>(null) }
     val allListings = remember { mutableStateListOf<Listing>().apply { addAll(starterListings) } }
+    val chatThreads = remember { mutableStateMapOf<String, List<ChatMessage>>() }
     var nextId by rememberSaveable { mutableStateOf(starterListings.size + 1) }
 
     if (loggedInUserId == null) {
@@ -144,12 +157,39 @@ fun BuySellApp() {
     }
 
     val selectedListing = allListings.firstOrNull { it.id == selectedListingId }
+    val pendingPurchaseListing = allListings.firstOrNull { it.id == pendingPurchaseListingId }
 
-    if (selectedListing != null) {
+    if (activeChatSellerId != null) {
+        ChatScreen(
+            currentUserId = loggedInUserId!!,
+            sellerId = activeChatSellerId!!,
+            messages = chatThreads[activeChatSellerId!!].orEmpty(),
+            onSendMessage = { messageText ->
+                val existing = chatThreads[activeChatSellerId!!].orEmpty()
+                chatThreads[activeChatSellerId!!] = existing + ChatMessage(
+                    senderId = loggedInUserId!!,
+                    text = messageText
+                )
+            },
+            onBack = { activeChatSellerId = null }
+        )
+    } else if (selectedListing != null) {
         ListingDetailScreen(
             listing = selectedListing,
             sellerRating = sellerRatings[selectedListing.sellerId] ?: 0f,
-            onBack = { selectedListingId = null }
+            onBack = { selectedListingId = null },
+            onChatClick = {
+                activeChatSellerId = selectedListing.sellerId
+                if (chatThreads[selectedListing.sellerId].isNullOrEmpty()) {
+                    chatThreads[selectedListing.sellerId] = listOf(
+                        ChatMessage(
+                            senderId = selectedListing.sellerId,
+                            text = "Hi! Thanks for your interest in ${selectedListing.title}."
+                        )
+                    )
+                }
+            },
+            onBuyClick = { pendingPurchaseListingId = selectedListing.id }
         )
     } else {
         MarketplaceScreen(
@@ -172,8 +212,22 @@ fun BuySellApp() {
                 nextId += 1
             },
             onLogout = {
+                activeChatSellerId = null
                 selectedListingId = null
+                pendingPurchaseListingId = null
                 loggedInUserId = null
+            }
+        )
+    }
+
+    if (pendingPurchaseListing != null) {
+        PurchaseConfirmationDialog(
+            listing = pendingPurchaseListing,
+            onDismiss = { pendingPurchaseListingId = null },
+            onConfirmBuy = {
+                allListings.removeAll { it.id == pendingPurchaseListing.id }
+                pendingPurchaseListingId = null
+                selectedListingId = null
             }
         )
     }
@@ -649,7 +703,9 @@ fun ListingCard(
 fun ListingDetailScreen(
     listing: Listing,
     sellerRating: Float,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onChatClick: () -> Unit,
+    onBuyClick: () -> Unit
 ) {
     // System back from details should return to the previous screen in-app.
     BackHandler(onBack = onBack)
@@ -754,6 +810,178 @@ fun ListingDetailScreen(
                     }
                 }
             }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onChatClick,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = "Chat")
+                    }
+
+                    Button(
+                        onClick = onBuyClick,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(text = "Buy")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PurchaseConfirmationDialog(
+    listing: Listing,
+    onDismiss: () -> Unit,
+    onConfirmBuy: () -> Unit
+) {
+    val highlightStyle = SpanStyle(
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.Bold
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = "Confirm Purchase") },
+        text = {
+            Text(
+                text = buildAnnotatedString {
+                    append("Are you sure you want to buy ")
+                    withStyle(style = highlightStyle) {
+                        append(listing.title)
+                    }
+                    append(" for ")
+                    withStyle(style = highlightStyle) {
+                        append(listing.price)
+                    }
+                    append("?")
+                }
+            )
+        },
+        confirmButton = {
+            Button(onClick = onConfirmBuy) {
+                Text("Buy")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+fun ChatScreen(
+    currentUserId: String,
+    sellerId: String,
+    messages: List<ChatMessage>,
+    onSendMessage: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    var inputText by rememberSaveable { mutableStateOf("") }
+
+    BackHandler(onBack = onBack)
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBack) {
+                    Text("Back")
+                }
+                Column {
+                    Text(
+                        text = "Chat with $sellerId",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Ask item details before confirming",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .padding(12.dp)
+        ) {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(messages) { message ->
+                    val isMine = message.senderId == currentUserId
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start
+                    ) {
+                        Surface(
+                            color = if (isMine) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text(
+                                text = message.text,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                color = if (isMine) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Type a message") },
+                    maxLines = 3
+                )
+
+                Button(
+                    onClick = {
+                        val message = inputText.trim()
+                        if (message.isNotEmpty()) {
+                            onSendMessage(message)
+                            inputText = ""
+                        }
+                    }
+                ) {
+                    Text("Send")
+                }
+            }
         }
     }
 }
@@ -848,6 +1076,25 @@ fun ListingDetailPreview() {
         ListingDetailScreen(
             listing = starterListings.first(),
             sellerRating = sellerRatings["sam"] ?: 0f,
+            onBack = {},
+            onChatClick = {},
+            onBuyClick = {}
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ChatScreenPreview() {
+    MarketofthehoodTheme {
+        ChatScreen(
+            currentUserId = "aksha",
+            sellerId = "sam",
+            messages = listOf(
+                ChatMessage(senderId = "sam", text = "Hi! Is this item available?"),
+                ChatMessage(senderId = "aksha", text = "Yes, it is available.")
+            ),
+            onSendMessage = {},
             onBack = {}
         )
     }
