@@ -25,12 +25,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -146,6 +150,7 @@ fun BuySellApp() {
     var loggedInUserId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedListingId by rememberSaveable { mutableStateOf<Int?>(null) }
     var activeChatSellerId by rememberSaveable { mutableStateOf<String?>(null) }
+    var isChatInboxOpen by rememberSaveable { mutableStateOf(false) }
     var pendingPurchaseListingId by rememberSaveable { mutableStateOf<Int?>(null) }
     val allListings = remember { mutableStateListOf<Listing>().apply { addAll(starterListings) } }
     val chatThreads = remember { mutableStateMapOf<String, List<ChatMessage>>() }
@@ -173,12 +178,22 @@ fun BuySellApp() {
             },
             onBack = { activeChatSellerId = null }
         )
+    } else if (isChatInboxOpen) {
+        ChatInboxScreen(
+            chatThreads = chatThreads,
+            onOpenChat = { sellerId ->
+                isChatInboxOpen = false
+                activeChatSellerId = sellerId
+            },
+            onBack = { isChatInboxOpen = false }
+        )
     } else if (selectedListing != null) {
         ListingDetailScreen(
             listing = selectedListing,
             sellerRating = sellerRatings[selectedListing.sellerId] ?: 0f,
             onBack = { selectedListingId = null },
             onChatClick = {
+                isChatInboxOpen = false
                 activeChatSellerId = selectedListing.sellerId
                 if (chatThreads[selectedListing.sellerId].isNullOrEmpty()) {
                     chatThreads[selectedListing.sellerId] = listOf(
@@ -196,6 +211,8 @@ fun BuySellApp() {
             userId = loggedInUserId!!,
             listings = allListings,
             sellerRatings = sellerRatings,
+            chatCount = chatThreads.size,
+            onOpenChatInbox = { isChatInboxOpen = true },
             onListingClick = { selectedListingId = it.id },
             onAddListing = { title, description, category, price, imageUri ->
                 allListings.add(
@@ -213,6 +230,7 @@ fun BuySellApp() {
             },
             onLogout = {
                 activeChatSellerId = null
+                isChatInboxOpen = false
                 selectedListingId = null
                 pendingPurchaseListingId = null
                 loggedInUserId = null
@@ -333,6 +351,8 @@ fun MarketplaceScreen(
     userId: String,
     listings: List<Listing>,
     sellerRatings: Map<String, Float>,
+    chatCount: Int,
+    onOpenChatInbox: () -> Unit,
     onListingClick: (Listing) -> Unit,
     onAddListing: (String, String, String, String, String?) -> Unit,
     onLogout: () -> Unit
@@ -370,8 +390,24 @@ fun MarketplaceScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    TextButton(onClick = onLogout) {
-                        Text("Logout")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onOpenChatInbox) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Chat,
+                                contentDescription = "Open chats"
+                            )
+                        }
+                        if (chatCount > 0) {
+                            Text(
+                                text = chatCount.toString(),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        TextButton(onClick = onLogout) {
+                            Text("Logout")
+                        }
                     }
                 }
 
@@ -987,6 +1023,95 @@ fun ChatScreen(
 }
 
 @Composable
+fun ChatInboxScreen(
+    chatThreads: Map<String, List<ChatMessage>>,
+    onOpenChat: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    BackHandler(onBack = onBack)
+
+    val threadEntries = chatThreads.entries
+        .filter { it.value.isNotEmpty() }
+        .sortedBy { it.key }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = onBack) {
+                    Text("Back")
+                }
+                Text(
+                    text = "Your chats",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+    ) { innerPadding ->
+        if (threadEntries.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "No previous chats yet. Open any item and tap Chat to start.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(threadEntries, key = { it.key }) { thread ->
+                    val sellerId = thread.key
+                    val lastMessage = thread.value.lastOrNull()?.text.orEmpty()
+
+                    Card(
+                        onClick = { onOpenChat(sellerId) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = sellerId,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = lastMessage,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ListingImage(
     imageUri: String?,
     category: String,
@@ -1062,6 +1187,8 @@ fun MarketplaceScreenPreview() {
             userId = "aksha",
             listings = starterListings,
             sellerRatings = sellerRatings,
+            chatCount = 2,
+            onOpenChatInbox = {},
             onListingClick = {},
             onAddListing = { _, _, _, _, _ -> },
             onLogout = {}
@@ -1099,3 +1226,24 @@ fun ChatScreenPreview() {
         )
     }
 }
+
+@Preview(showBackground = true)
+@Composable
+fun ChatInboxPreview() {
+    MarketofthehoodTheme {
+        ChatInboxScreen(
+            chatThreads = mapOf(
+                "sam" to listOf(
+                    ChatMessage("sam", "Hi! Is this item still available?"),
+                    ChatMessage("aksha", "Yes, available")
+                ),
+                "ria" to listOf(
+                    ChatMessage("ria", "Can you pick up tomorrow?")
+                )
+            ),
+            onOpenChat = {},
+            onBack = {}
+        )
+    }
+}
+
